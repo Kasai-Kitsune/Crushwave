@@ -16,8 +16,4 @@ Runs on an AudioWorklet when available, with a ScriptProcessor fallback for olde
 
 ## Usage
 
-Open `crushwave.html` in a browser. Tap to power on (required for audio context autoplay rules), load a file or enable mic, adjust controls.
-
-## Notes
-
-No build step, no external scripts, no analytics. Everything runs locally in the tab.
+Open `crushwave.html` in a browser, or launch from here. Tap to power on (required for audio context autoplay rules).
