@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#1a0b2e" />
+<title>CRUSH//WAVE — mini studio bit crusher</title>
+
+<!-- ============ BIT CRUSHER + RECORDER WORKLET (loaded as a Blob) ============ -->
+<script id="worklet-src" type="text/js-worklet">
+class BitCrusherProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return [
+      { name: 'bits',     defaultValue: 16, minValue: 1,     maxValue: 16, automationRate: 'k-rate' },
+      { name: 'normFreq', defaultValue: 1,  minValue: 0.001, maxValue: 1,  automationRate: 'k-rate' }
+    ];
+  }
+  constructor() { super(); this.phase = []; this.hold = []; }
+  process(inputs, outputs) {
+    const input = inputs[0], output = outputs[0];
+    if (!input || input.length === 0) return true;
+    const bits = this._b, nf = this._n;
+    // params fallback (k-rate values are passed via message for stability)
+    const levels = Math.pow(2, this.__bits ?? 16) - 1;
+    const nfreq = this.__nf ?? 1;
+    for (let ch = 0; ch < output.length; ch++) {
+      const inp = input[ch] || input[0];
+      const out = output[ch];
+      if (this.phase[ch] === undefined) { this.phase[ch] = 1; this.hold[ch] = 0; }
+      let phase = this.phase[ch], hold = this.hold[ch];
+      for (let i = 0; i < out.length; i++) {
+        phase += nfreq;
+        if (phase >= 1) {
+          phase -= 1;
+          const s = inp[i];
+          hold = Math.round((s * 0.5 + 0.5) * levels) / levels * 2 - 1;
+        }
+        out[i] = hold;
+      }
+      this.phase[ch] = phase; this.hold[ch] = hold;
+    }
+    return true;
+  }
+}
+// use messages to update params reliably across browsers
+BitCrusherProcessor.prototype.__bits = 16;
+BitCrusherProcessor.prototype.__nf = 1;
+class BitCrusherProcessorMsg extends BitCrusherProcessor {
+  constructor() { super(); this.port.onmessage = (e) => {
+    if (e.data.bits !== undefined) this.__bits = e.data.bits;
+    if (e.data.nf   !== undefined) this.__nf   = e.data.nf;
+  }; }
+}
+registerProcessor('bitcrusher', BitCrusherProcessorMsg);
+</script>
+
+<style>
+  :root{
+    --bg0:#160726; --bg1:#2a0f47; --pink:#ff4fd8; --cyan:#25f4ee; --phos:#38ffb3;
+    --purple:#8a4bff; --amber:#ffd23f; --ink:#e9d5ff; --panel:rgba(20,7,40,.62);
+    --line:rgba(255,79,216,.35);
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; }
+  body{
+    font-family:"Courier New",ui-monospace,Menlo,Consolas,monospace;
+    color:var(--ink);
+    background:
+      radial-gradient(120% 80% at 50% -10%, #ff58c4 0%, #7a2bd6 32%, #2a0f47 60%, #120520 100%);
+    min-height:100%;
+    overflow-x:hidden;
+    position:relative;
+    padding-bottom:40px;
+  }
+  /* retro perspective grid floor */
+  body::before{
+    content:""; position:fixed; inset:auto 0 0 0; height:46vh; z-index:0; pointer-events:none;
+    background:
+      repeating-linear-gradient(90deg, rgba(37,244,238,.18) 0 2px, transparent 2px 8%),
+      repeating-linear-gradient(0deg,  rgba(255,79,216,.20) 0 2px, transparent 2px 40px);
+    transform:perspective(320px) rotateX(66deg); transform-origin:bottom;
+    mask-image:linear-gradient(to top, #000 0%, transparent 92%);
+    -webkit-mask-image:linear-gradient(to top, #000 0%, transparent 92%);
+    opacity:.7;
+  }
+  /* CRT scanlines + flicker over everything */
+  body::after{
+    content:""; position:fixed; inset:0; z-index:99; pointer-events:none;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px);
+    mix-blend-mode:multiply; animation:flick 7s infinite steps(60);
+  }
+  @keyframes flick{ 0%,97%{opacity:.5} 98%{opacity:.28} 99%{opacity:.6} 100%{opacity:.42} }
+
+  .wrap{ position:relative; z-index:2; max-width:760px; margin:0 auto; padding:18px 14px 0; }
+
+  header{ text-align:center; margin-bottom:14px; }
+  .logo{
+    font-weight:bold; font-size:clamp(30px,9vw,58px); letter-spacing:2px; line-height:.95;
+    color:#fff; position:relative; display:inline-block;
+    text-shadow:0 0 8px var(--pink);
+  }
+  .logo::before,.logo::after{
+    content:"CRUSH//WAVE"; position:absolute; inset:0; }
+  .logo::before{ color:var(--cyan);  transform:translate(-2px,0); mix-blend-mode:screen; animation:ab 2.4s infinite steps(30); }
+  .logo::after { color:var(--pink);  transform:translate(2px,0);  mix-blend-mode:screen; animation:ab 3.1s infinite steps(30) reverse; }
+  @keyframes ab{ 0%,90%{clip-path:inset(0 0 0 0)} 92%{clip-path:inset(40% 0 20% 0)} 96%{clip-path:inset(10% 0 60% 0)} }
+  .tag{ font-size:12px; letter-spacing:4px; color:var(--phos); text-shadow:0 0 8px var(--phos); margin-top:4px; }
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:14px;
+    margin-bottom:14px;
+    backdrop-filter:blur(6px);
+    box-shadow:0 0 0 1px rgba(37,244,238,.15) inset, 0 8px 30px rgba(0,0,0,.45), 0 0 22px rgba(255,79,216,.12);
+  }
+  .panel h2{
+    margin:0 0 10px; font-size:12px; letter-spacing:3px; color:var(--cyan);
+    text-shadow:0 0 6px var(--cyan); display:flex; align-items:center; gap:8px;
+  }
+  .panel h2 .dot{ width:8px;height:8px;border-radius:50%;background:var(--phos);box-shadow:0 0 8px var(--phos); }
+
+  /* ===== CRT screen (EQ + scope) ===== */
+  .screen{
+    position:relative; border-radius:12px; overflow:hidden;
+    background:radial-gradient(120% 140% at 50% 0%, #0a1f1a 0%, #05100c 70%, #020806 100%);
+    border:1px solid rgba(56,255,179,.4);
+    box-shadow:0 0 22px rgba(56,255,179,.25) inset, 0 0 12px rgba(56,255,179,.25);
+  }
+  .screen::after{ content:""; position:absolute; inset:0; pointer-events:none;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,.25) 0 1px, transparent 1px 3px); }
+  canvas{ display:block; width:100%; touch-action:none; }
+  #scope{ height:70px; }
+  #eq{ height:210px; }
+  .screenhint{ position:absolute; left:8px; bottom:6px; font-size:10px; letter-spacing:2px;
+    color:var(--phos); text-shadow:0 0 6px var(--phos); opacity:.75; pointer-events:none; z-index:3; }
+
+  /* ===== faders ===== */
+  .faders{ display:grid; grid-template-columns:repeat(2,1fr); gap:14px 18px; }
+  @media(max-width:520px){ .faders{ grid-template-columns:1fr; } }
+  .ctl label{ display:flex; justify-content:space-between; align-items:center; font-size:11px;
+    letter-spacing:2px; color:var(--ink); margin-bottom:6px; }
+  .ctl .name{ color:#fff; text-shadow:0 0 6px var(--pink); }
+  .num{ width:66px; background:#0c0418; color:var(--phos); border:1px solid var(--line);
+    border-radius:6px; font-family:inherit; font-size:12px; text-align:right; padding:3px 6px;
+    text-shadow:0 0 6px var(--phos); }
+  input[type=range]{ -webkit-appearance:none; appearance:none; width:100%; height:26px; background:transparent; }
+  input[type=range]::-webkit-slider-runnable-track{ height:8px; border-radius:6px;
+    background:linear-gradient(90deg,var(--cyan),var(--pink)); box-shadow:0 0 8px rgba(255,79,216,.5); }
+  input[type=range]::-moz-range-track{ height:8px; border-radius:6px;
+    background:linear-gradient(90deg,var(--cyan),var(--pink)); box-shadow:0 0 8px rgba(255,79,216,.5); }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:26px; height:26px;
+    margin-top:-9px; border-radius:6px; background:#fff; border:2px solid var(--pink);
+    box-shadow:0 0 12px var(--pink); cursor:pointer; }
+  input[type=range]::-moz-range-thumb{ width:24px; height:24px; border-radius:6px; background:#fff;
+    border:2px solid var(--pink); box-shadow:0 0 12px var(--pink); cursor:pointer; }
+
+  /* ===== transport ===== */
+  .row{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .btn{ font-family:inherit; font-size:13px; letter-spacing:1px; color:#fff; cursor:pointer;
+    background:linear-gradient(180deg, rgba(255,79,216,.25), rgba(37,244,238,.12));
+    border:1px solid var(--line); border-radius:10px; padding:10px 14px;
+    box-shadow:0 0 10px rgba(255,79,216,.25) inset; transition:transform .05s, box-shadow .2s; }
+  .btn:active{ transform:translateY(1px) scale(.98); }
+  .btn.on{ background:linear-gradient(180deg, var(--phos), #17a06b); color:#03130d;
+    box-shadow:0 0 16px var(--phos); border-color:var(--phos); }
+  .btn.rec.on{ background:linear-gradient(180deg,#ff5a7a,#c01037); color:#fff; box-shadow:0 0 18px #ff5a7a;
+    border-color:#ff5a7a; animation:pulse 1s infinite; }
+  @keyframes pulse{ 50%{ box-shadow:0 0 4px #ff5a7a } }
+  .btn[disabled]{ opacity:.4; pointer-events:none; }
+
+  .drop{ border:1.5px dashed var(--cyan); border-radius:10px; padding:14px; text-align:center;
+    color:var(--cyan); font-size:12px; letter-spacing:1px; cursor:pointer; background:rgba(37,244,238,.05);
+    text-shadow:0 0 6px var(--cyan); }
+  .drop.hot{ background:rgba(255,79,216,.14); border-color:var(--pink); color:var(--pink); text-shadow:0 0 6px var(--pink); }
+  .fname{ font-size:11px; color:var(--phos); text-shadow:0 0 6px var(--phos); margin-top:8px; word-break:break-all; min-height:14px; }
+
+  .seek{ display:flex; align-items:center; gap:10px; margin-top:10px; }
+  .seek input[type=range]{ flex:1; }
+  .time{ font-size:11px; color:var(--phos); text-shadow:0 0 6px var(--phos); min-width:86px; text-align:right; }
+
+  .foot{ text-align:center; font-size:10px; letter-spacing:2px; color:rgba(233,213,255,.55); margin-top:6px; }
+  a.dl{ color:var(--phos); text-shadow:0 0 6px var(--phos); }
+
+  /* ===== stylized info glyph ===== */
+  .info{
+    -webkit-appearance:none; appearance:none; cursor:pointer; flex:0 0 auto;
+    width:18px; height:18px; border-radius:50%; padding:0; margin:0;
+    display:inline-grid; place-items:center; font-family:inherit; font-style:italic;
+    font-weight:bold; font-size:11px; line-height:1; color:var(--cyan);
+    background:radial-gradient(circle at 50% 35%, rgba(37,244,238,.22), rgba(20,7,40,.9));
+    border:1px solid var(--cyan);
+    text-shadow:0 0 6px var(--cyan);
+    box-shadow:0 0 8px rgba(37,244,238,.5), 0 0 6px rgba(37,244,238,.35) inset;
+    transition:transform .08s, box-shadow .2s;
+  }
+  .info:active{ transform:scale(.9); }
+  .info:hover{ box-shadow:0 0 14px var(--cyan), 0 0 6px rgba(37,244,238,.4) inset; }
+  .ctl label .lbl{ display:flex; align-items:center; gap:7px; }
+  .h2info{ margin-left:auto; }
+
+  /* ===== info modal ===== */
+  #modal{ position:fixed; inset:0; z-index:150; display:none; align-items:center; justify-content:center;
+    padding:22px; background:rgba(8,3,18,.72); backdrop-filter:blur(3px); }
+  #modal.show{ display:flex; animation:mfade .18s ease-out; }
+  @keyframes mfade{ from{opacity:0} to{opacity:1} }
+  #modal .card{ position:relative; max-width:340px; width:100%;
+    background:linear-gradient(180deg, rgba(42,15,71,.96), rgba(18,5,32,.98));
+    border:1px solid var(--pink); border-radius:14px; padding:20px 18px 18px;
+    box-shadow:0 0 26px rgba(255,79,216,.4), 0 0 0 1px rgba(37,244,238,.2) inset;
+    animation:mpop .2s cubic-bezier(.2,1.4,.4,1); }
+  @keyframes mpop{ from{transform:scale(.85)} to{transform:scale(1)} }
+  #modal .card::after{ content:""; position:absolute; inset:0; border-radius:14px; pointer-events:none;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px); }
+  #modal .mtitle{ font-size:13px; letter-spacing:3px; color:var(--phos); text-shadow:0 0 8px var(--phos); margin:0 0 10px; }
+  #modal .mbody{ font-size:13px; line-height:1.5; color:var(--ink); position:relative; z-index:1; }
+  #modal .mclose{ position:absolute; top:8px; right:10px; width:26px; height:26px; border-radius:50%;
+    background:transparent; border:1px solid var(--pink); color:var(--pink); font-family:inherit; cursor:pointer;
+    text-shadow:0 0 6px var(--pink); box-shadow:0 0 8px rgba(255,79,216,.4); }
+
+  /* reset button */
+  .btn.mini{ padding:7px 12px; font-size:12px; }
+
+  /* ===== power overlay ===== */
+  #power{ position:fixed; inset:0; z-index:200; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:16px; cursor:pointer;
+    background:radial-gradient(120% 90% at 50% 30%, #3a1266, #0a0417 80%); }
+  #power .big{ font-size:clamp(26px,8vw,48px); color:#fff; text-shadow:0 0 14px var(--pink); letter-spacing:3px; }
+  #power .sub{ color:var(--phos); text-shadow:0 0 8px var(--phos); letter-spacing:4px; font-size:13px; animation:blink 1.1s steps(2) infinite; }
+  @keyframes blink{ 50%{opacity:.15} }
+  .hidden{ display:none !important; }
+</style>
+</head>
+<body>
+
+<div id="power">
+  <div class="logo">CRUSH//WAVE</div>
+  <div class="big">◉ TAP TO POWER ON ◉</div>
+  <div class="sub">— WEB AUDIO ENGINE / BYOF —</div>
+</div>
+
+<div class="wrap">
+  <header>
+    <div class="logo">CRUSH//WAVE</div>
+    <div class="tag">MINI STUDIO BIT CRUSHER</div>
+  </header>
+
+  <!-- SCREEN -->
+  <div class="panel">
+    <h2><span class="dot"></span>SPECTRAL NODE — DRAG THE HUMP<button class="info h2info" data-info="eq">i</button></h2>
+    <div class="screen">
+      <canvas id="scope"></canvas>
+      <canvas id="eq"></canvas>
+      <div class="screenhint">← FREQ →  ·  ↕ GAIN  ·  WIDTH = Q</div>
+    </div>
+    <div class="ctl" style="margin-top:12px">
+      <label><span class="lbl"><span class="name">Q / WIDTH</span><button class="info" data-info="q">i</button></span><input class="num" id="qNum" /></label>
+      <input type="range" id="qRng" min="0.2" max="12" step="0.1" value="1.2" />
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn mini" id="eqReset">⟲ RESET HUMP</button>
+      <span class="foot" style="margin:0">double-tap the screen to reset too</span>
+    </div>
+  </div>
+
+  <!-- SOURCE -->
+  <div class="panel">
+    <h2><span class="dot"></span>SOURCE — BRING YOUR OWN FILE<button class="info h2info" data-info="source">i</button></h2>
+    <div class="drop" id="drop">DROP AUDIO HERE · OR TAP TO CHOOSE (wav / mp3 / m4a / ogg)</div>
+    <input type="file" id="file" accept="audio/*" class="hidden" />
+    <div class="fname" id="fname"></div>
+    <div class="seek">
+      <input type="range" id="seek" min="0" max="1000" step="1" value="0" disabled />
+      <span class="time" id="time">0:00 / 0:00</span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="play" disabled>▶ PLAY</button>
+      <button class="btn" id="loop">↻ LOOP</button>
+      <button class="btn" id="mic">🎙 LIVE MIC</button>
+    </div>
+  </div>
+
+  <!-- CRUSHER -->
+  <div class="panel">
+    <h2><span class="dot"></span>THE CRUSHER<button class="info h2info" data-info="crusher">i</button></h2>
+    <div class="faders">
+      <div class="ctl"><label><span class="lbl"><span class="name">BIT DEPTH</span><button class="info" data-info="bits">i</button></span><input class="num" id="bitsNum"/></label>
+        <input type="range" id="bitsRng" min="1" max="16" step="0.1" value="16" /></div>
+      <div class="ctl"><label><span class="lbl"><span class="name">SAMPLE RATE ↓</span><button class="info" data-info="sr">i</button></span><input class="num" id="srNum"/></label>
+        <input type="range" id="srRng" min="0" max="100" step="0.5" value="0" /></div>
+      <div class="ctl"><label><span class="lbl"><span class="name">DRIVE (dB)</span><button class="info" data-info="drive">i</button></span><input class="num" id="drvNum"/></label>
+        <input type="range" id="drvRng" min="0" max="24" step="0.1" value="0" /></div>
+      <div class="ctl"><label><span class="lbl"><span class="name">TONE (Hz)</span><button class="info" data-info="tone">i</button></span><input class="num" id="toneNum"/></label>
+        <input type="range" id="toneRng" min="200" max="20000" step="1" value="20000" /></div>
+      <div class="ctl"><label><span class="lbl"><span class="name">DRY / WET</span><button class="info" data-info="mix">i</button></span><input class="num" id="mixNum"/></label>
+        <input type="range" id="mixRng" min="0" max="100" step="1" value="100" /></div>
+      <div class="ctl"><label><span class="lbl"><span class="name">OUTPUT (dB)</span><button class="info" data-info="output">i</button></span><input class="num" id="outNum"/></label>
+        <input type="range" id="outRng" min="-24" max="6" step="0.1" value="0" /></div>
+    </div>
+  </div>
+
+  <!-- RENDER -->
+  <div class="panel">
+    <h2><span class="dot"></span>CAPTURE<button class="info h2info" data-info="capture">i</button></h2>
+    <div class="row">
+      <button class="btn rec" id="rec">● RECORD</button>
+      <span class="time" id="recTime">00:00</span>
+      <a id="dl" class="btn dl hidden" download="crushwave.wav">⬇ DOWNLOAD .WAV</a>
+    </div>
+    <div class="foot">records the processed output · soft-clip limiter protects your ears</div>
+  </div>
+
+  <div class="foot">CRUSH//WAVE · self-contained · web audio api + audioworklet</div>
+</div>
+
+<!-- info modal -->
+<div id="modal">
+  <div class="card">
+    <button class="mclose" id="mclose">×</button>
+    <h3 class="mtitle" id="mtitle"></h3>
+    <div class="mbody" id="mbody"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+(function(){
+  // ---------- element refs ----------
+  const $ = (id)=>document.getElementById(id);
+  const power=$('power');
+  let ctx, inputGain, driveGain, driveShaper, eq, crusher, tone, wetGain, dryGain, mixBus,
+      outputGain, safety, analyser, recorder, zeroGain, usingWorklet=false;
+  const crusherState={ bits:16, nf:1 };
+
+  // ---------- helpers ----------
+  const dbToGain = db => Math.pow(10, db/20);
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const fmtTime=s=>{ s=Math.max(0,s|0); return (s/60|0)+':'+String(s%60).padStart(2,'0'); };
+  function makeTanhCurve(k){ const n=1024,c=new Float32Array(n),d=Math.tanh(k);
+    for(let i=0;i<n;i++){ const x=i/(n-1)*2-1; c[i]=Math.tanh(k*x)/d; } return c; }
+
+  // ---------- build audio graph ----------
+  async function initAudio(){
+    ctx = new (window.AudioContext||window.webkitAudioContext)();
+
+    inputGain  = ctx.createGain();
+    driveGain  = ctx.createGain();
+    driveShaper= ctx.createWaveShaper(); driveShaper.curve=makeTanhCurve(2.2);
+    eq         = ctx.createBiquadFilter(); eq.type='peaking'; eq.frequency.value=1200; eq.gain.value=0; eq.Q.value=1.2;
+    tone       = ctx.createBiquadFilter(); tone.type='lowpass'; tone.frequency.value=20000; tone.Q.value=0.7;
+    wetGain    = ctx.createGain(); wetGain.gain.value=1;
+    dryGain    = ctx.createGain(); dryGain.gain.value=0;
+    mixBus     = ctx.createGain();
+    outputGain = ctx.createGain(); outputGain.gain.value=1;
+    safety     = ctx.createWaveShaper(); safety.curve=makeTanhCurve(1.5);
+    analyser   = ctx.createAnalyser(); analyser.fftSize=2048;
+    zeroGain   = ctx.createGain(); zeroGain.gain.value=0;
+
+    // crusher: AudioWorklet if available, else ScriptProcessor fallback
+    if(ctx.audioWorklet){
+      try{
+        const src=document.getElementById('worklet-src').textContent;
+        const url=URL.createObjectURL(new Blob([src],{type:'application/javascript'}));
+        await ctx.audioWorklet.addModule(url);
+        crusher=new AudioWorkletNode(ctx,'bitcrusher',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[2]});
+        usingWorklet=true;
+      }catch(e){ usingWorklet=false; }
+    }
+    if(!usingWorklet){
+      crusher=ctx.createScriptProcessor(1024,2,2);
+      const ph=[1,1], hold=[0,0];
+      crusher.onaudioprocess=(e)=>{
+        const inB=e.inputBuffer, outB=e.outputBuffer;
+        const levels=Math.pow(2,crusherState.bits)-1, nf=crusherState.nf;
+        for(let ch=0; ch<outB.numberOfChannels; ch++){
+          const inp=inB.getChannelData(Math.min(ch,inB.numberOfChannels-1));
+          const out=outB.getChannelData(ch);
+          let phase=ph[ch]||1, h=hold[ch]||0;
+          for(let i=0;i<out.length;i++){
+            phase+=nf;
+            if(phase>=1){ phase-=1; const s=inp[i]; h=Math.round((s*0.5+0.5)*levels)/levels*2-1; }
+            out[i]=h;
+          }
+          ph[ch]=phase; hold[ch]=h;
+        }
+      };
+    }
+
+    // recorder tap (ScriptProcessor — universal)
+    recorder=ctx.createScriptProcessor(4096,2,2);
+    recorder.onaudioprocess=(e)=>{
+      if(!recording) return;
+      const l=e.inputBuffer.getChannelData(0);
+      const r=e.inputBuffer.numberOfChannels>1?e.inputBuffer.getChannelData(1):l;
+      recL.push(new Float32Array(l)); recR.push(new Float32Array(r)); recLen+=l.length;
+    };
+
+    // wiring: WET path
+    inputGain.connect(driveGain); driveGain.connect(driveShaper); driveShaper.connect(eq);
+    eq.connect(crusher); crusher.connect(tone); tone.connect(wetGain); wetGain.connect(mixBus);
+    // DRY path
+    inputGain.connect(dryGain); dryGain.connect(mixBus);
+    // OUTPUT
+    mixBus.connect(outputGain); outputGain.connect(safety);
+    safety.connect(analyser); analyser.connect(ctx.destination);
+    // recorder tap kept alive via zeroGain->destination
+    safety.connect(recorder); recorder.connect(zeroGain); zeroGain.connect(ctx.destination);
+
+    applyAllControls();
+    requestAnimationFrame(drawLoop);
+  }
+
+  // ---------- controls binding ----------
+  function bindPair(rngId,numId,fmt,onChange){
+    const rng=$(rngId), num=$(numId);
+    const set=(v,fromNum)=>{ v=clamp(parseFloat(v)||0, parseFloat(rng.min), parseFloat(rng.max));
+      if(!fromNum) num.value=fmt(v); rng.value=v; onChange(v); };
+    rng.addEventListener('input',()=>set(rng.value,false));
+    num.addEventListener('change',()=>set(num.value,false));
+    num.value=fmt(parseFloat(rng.value)); onChange(parseFloat(rng.value));
+    return set;
+  }
+  function setCrusherBits(v){ crusherState.bits=v; if(usingWorklet&&crusher) crusher.port.postMessage({bits:v}); }
+  function setCrusherNf(v){ crusherState.nf=v; if(usingWorklet&&crusher) crusher.port.postMessage({nf:v}); }
+
+  function applyAllControls(){
+    // called after init to push initial values
+    if(!ctx) return;
+    setCrusherBits(parseFloat($('bitsRng').value));
+    const p=parseFloat($('srRng').value); setCrusherNf(Math.pow(2,-(p/100)*6));
+    driveGain.gain.value=dbToGain(parseFloat($('drvRng').value));
+    tone.frequency.value=parseFloat($('toneRng').value);
+    const t=parseFloat($('mixRng').value)/100; wetGain.gain.value=Math.sin(t*Math.PI/2); dryGain.gain.value=Math.cos(t*Math.PI/2);
+    outputGain.gain.value=dbToGain(parseFloat($('outRng').value));
+    eq.Q.value=parseFloat($('qRng').value);
+  }
+
+  function wireControls(){
+    bindPair('bitsRng','bitsNum', v=>v.toFixed(1), v=>setCrusherBits(v));
+    bindPair('srRng','srNum', v=>v.toFixed(0)+'%', v=>setCrusherNf(Math.pow(2,-(v/100)*6)));
+    bindPair('drvRng','drvNum', v=>v.toFixed(1), v=>{ if(driveGain) driveGain.gain.value=dbToGain(v); });
+    bindPair('toneRng','toneNum', v=>Math.round(v)+' Hz', v=>{ if(tone) tone.frequency.value=v; });
+    bindPair('mixRng','mixNum', v=>v.toFixed(0)+'%', v=>{ if(wetGain){ const t=v/100; wetGain.gain.value=Math.sin(t*Math.PI/2); dryGain.gain.value=Math.cos(t*Math.PI/2);} });
+    bindPair('outRng','outNum', v=>v.toFixed(1), v=>{ if(outputGain) outputGain.gain.value=dbToGain(v); });
+    bindPair('qRng','qNum', v=>v.toFixed(1), v=>{ if(eq) eq.Q.value=v; eqDirty=true; });
+  }
+
+  // ---------- EQ + scope canvas ----------
+  const scope=$('scope'), eqc=$('eq');
+  const sctx=scope.getContext('2d'), ectx=eqc.getContext('2d');
+  let eqDirty=true;
+  const FMIN=30, FMAX=18000, GMAX=18;
+  function resize(){
+    for(const c of [scope,eqc]){
+      const r=c.getBoundingClientRect(), dpr=Math.min(devicePixelRatio||1,2);
+      c.width=r.width*dpr; c.height=r.height*dpr;
+      c.getContext('2d').setTransform(dpr,0,0,dpr,0,0);
+    }
+    eqDirty=true;
+  }
+  window.addEventListener('resize',resize);
+
+  const xToFreq=(x,w)=>FMIN*Math.pow(FMAX/FMIN, clamp(x/w,0,1));
+  const freqToX=(f,w)=>Math.log(f/FMIN)/Math.log(FMAX/FMIN)*w;
+  const yToGain=(y,h)=>clamp((0.5 - y/h)*2*GMAX, -GMAX, GMAX);
+  const gainToY=(g,h)=>h*(0.5 - g/(2*GMAX));
+
+  function drawEQ(){
+    const w=eqc.clientWidth, h=eqc.clientHeight;
+    ectx.clearRect(0,0,w,h);
+    // grid
+    ectx.lineWidth=1;
+    ectx.strokeStyle='rgba(56,255,179,.16)';
+    [100,1000,10000].forEach(f=>{ const x=freqToX(f,w); ectx.beginPath(); ectx.moveTo(x,0); ectx.lineTo(x,h); ectx.stroke(); });
+    ectx.strokeStyle='rgba(56,255,179,.10)';
+    for(let g=-GMAX;g<=GMAX;g+=6){ const y=gainToY(g,h); ectx.beginPath(); ectx.moveTo(0,y); ectx.lineTo(w,y); ectx.stroke(); }
+    ectx.strokeStyle='rgba(56,255,179,.35)'; const y0=gainToY(0,h);
+    ectx.beginPath(); ectx.moveTo(0,y0); ectx.lineTo(w,y0); ectx.stroke();
+    // response curve
+    const N=Math.max(64,Math.floor(w));
+    const freqs=new Float32Array(N), mag=new Float32Array(N), pha=new Float32Array(N);
+    for(let i=0;i<N;i++) freqs[i]=xToFreq(i/(N-1)*w, w);
+    if(eq && eq.getFrequencyResponse) eq.getFrequencyResponse(freqs,mag,pha);
+    const grad=ectx.createLinearGradient(0,0,w,0); grad.addColorStop(0,'#25f4ee'); grad.addColorStop(1,'#ff4fd8');
+    ectx.strokeStyle=grad; ectx.lineWidth=2.4; ectx.shadowColor='#ff4fd8'; ectx.shadowBlur=10;
+    ectx.beginPath();
+    for(let i=0;i<N;i++){ const db=20*Math.log10(mag[i]||1e-6); const x=i/(N-1)*w; const y=gainToY(clamp(db,-GMAX,GMAX),h);
+      i?ectx.lineTo(x,y):ectx.moveTo(x,y); }
+    ectx.stroke(); ectx.shadowBlur=0;
+    // node handle
+    const hx=freqToX(eq?eq.frequency.value:1200,w), hy=gainToY(eq?eq.gain.value:0,h);
+    ectx.fillStyle='#fff'; ectx.shadowColor='#25f4ee'; ectx.shadowBlur=14;
+    ectx.beginPath(); ectx.arc(hx,hy,8,0,7); ectx.fill(); ectx.shadowBlur=0;
+    ectx.strokeStyle='#25f4ee'; ectx.lineWidth=2; ectx.beginPath(); ectx.arc(hx,hy,12,0,7); ectx.stroke();
+    // readout
+    ectx.fillStyle='rgba(56,255,179,.9)'; ectx.font='11px "Courier New",monospace';
+    ectx.fillText(Math.round(eq?eq.frequency.value:0)+' Hz  '+(eq?eq.gain.value:0).toFixed(1)+' dB', 8, 16);
+  }
+
+  function drawScope(){
+    const w=scope.clientWidth, h=scope.clientHeight;
+    sctx.clearRect(0,0,w,h);
+    if(!analyser) return;
+    const n=analyser.fftSize, buf=new Uint8Array(n); analyser.getByteTimeDomainData(buf);
+    sctx.strokeStyle='#38ffb3'; sctx.lineWidth=2; sctx.shadowColor='#38ffb3'; sctx.shadowBlur=8;
+    sctx.beginPath();
+    for(let i=0;i<n;i++){ const x=i/(n-1)*w; const y=(1-(buf[i]/255))*h; i?sctx.lineTo(x,y):sctx.moveTo(x,y); }
+    sctx.stroke(); sctx.shadowBlur=0;
+  }
+
+  function drawLoop(){
+    drawScope();
+    if(eqDirty || document.hasFocus()) drawEQ();
+    updateTransportUI();
+    requestAnimationFrame(drawLoop);
+  }
+
+  // EQ pointer drag
+  let dragging=false;
+  function eqPoint(ev){
+    const r=eqc.getBoundingClientRect();
+    const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+    const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+    if(!eq) return;
+    eq.frequency.value=clamp(xToFreq(cx,r.width),FMIN,FMAX);
+    eq.gain.value=yToGain(cy,r.height);
+    eqDirty=true;
+  }
+  eqc.addEventListener('pointerdown',e=>{ dragging=true; eqc.setPointerCapture(e.pointerId); eqPoint(e); });
+  eqc.addEventListener('pointermove',e=>{ if(dragging){ e.preventDefault(); eqPoint(e);} },{passive:false});
+  eqc.addEventListener('pointerup',()=>dragging=false);
+  eqc.addEventListener('pointercancel',()=>dragging=false);
+
+  // reset the EQ hump: flat gain, centered frequency, default Q
+  function resetEQ(){
+    if(eq){ eq.frequency.value=1200; eq.gain.value=0; eq.Q.value=1.2; }
+    const q=$('qRng'); q.value=1.2; $('qNum').value=(1.2).toFixed(1);
+    eqDirty=true;
+  }
+  $('eqReset').addEventListener('click',resetEQ);
+  // double-tap / double-click the screen to reset
+  let lastTap=0;
+  eqc.addEventListener('pointerup',()=>{ const now=Date.now(); if(now-lastTap<300){ dragging=false; resetEQ(); } lastTap=now; });
+  eqc.addEventListener('dblclick',e=>{ e.preventDefault(); resetEQ(); });
+
+  // ---------- info tooltips ----------
+  const INFO={
+    eq:['SPECTRAL NODE','This is a parametric EQ bell (peaking) filter — the "hump" that reshapes the whole spectrum. Drag the glowing node on screen: left/right sweeps the center FREQUENCY (30 Hz–18 kHz), up/down is BOOST or CUT (±18 dB). Double-tap or hit RESET HUMP to flatten it instantly.'],
+    q:['Q / WIDTH','Sets how wide or narrow the EQ hump is. Low Q = a broad, gentle bump affecting a large frequency range. High Q = a tight, surgical spike affecting a very narrow band. It sculpts the shape of the hump you drag above.'],
+    source:['SOURCE — BYOF','Bring your own file: drop an audio file (wav / mp3 / m4a / ogg) or tap to choose one. PLAY / pause, LOOP it, and scrub with the seek bar. LIVE MIC routes your microphone through the crusher in real time — no demo gear, by design.'],
+    crusher:['THE CRUSHER','The core lo-fi engine. Signal flows: DRIVE → the crusher (bit + sample-rate reduction) → TONE → DRY/WET blend → OUTPUT, with a soft-clip limiter on the very end so it can never blast your ears.'],
+    bits:['BIT DEPTH','Reduces the resolution of each sample. 16 bits is clean; as you drop toward 1 bit the audio gets progressively grittier and more quantized — that classic crunchy digital distortion. It is continuous, so you can dial in subtle or extreme amounts.'],
+    sr:['SAMPLE RATE ↓','Decimation / downsampling. It throws away samples to lower the effective sample rate, adding aliasing and that harsh, ringing "old digital toy" character. 0% is untouched; higher values reduce the rate more aggressively.'],
+    drive:['DRIVE (dB)','Pre-gain pushed into the crusher through a soft saturation stage. More drive means a hotter, grittier signal hitting the bit reduction, which makes the crushing dirtier and more aggressive.'],
+    tone:['TONE (Hz)','A one-knob low-pass filter after the crusher. Lower it to roll off the harsh high-frequency aliasing and fizz that bit-crushing creates, warming and taming the sound. At 20 kHz it is effectively fully open.'],
+    mix:['DRY / WET','Equal-power blend between the untouched (dry) signal and the crushed (wet) signal. 100% is fully crushed; lower it to run the effect in parallel and keep some of the clean original underneath — great for subtle grit.'],
+    output:['OUTPUT (dB)','Final output level. Because crushing and drive can change loudness a lot, use this to match levels. A tanh soft-clip limiter sits after it, so pushing hot saturates gently instead of harshly clipping your headphones.'],
+    capture:['CAPTURE','RECORD taps the fully processed output and captures it. Hit STOP and a DOWNLOAD .WAV link appears — a real 16-bit stereo WAV of exactly what you heard, crushing and all.']
+  };
+  const modal=$('modal');
+  function openInfo(key){ const d=INFO[key]; if(!d) return; $('mtitle').textContent=d[0]; $('mbody').textContent=d[1]; modal.classList.add('show'); }
+  function closeInfo(){ modal.classList.remove('show'); }
+  document.querySelectorAll('.info').forEach(b=>b.addEventListener('click',e=>{ e.preventDefault(); e.stopPropagation(); openInfo(b.dataset.info); }));
+  $('mclose').addEventListener('click',closeInfo);
+  modal.addEventListener('click',e=>{ if(e.target===modal) closeInfo(); });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeInfo(); });
+
+  // ---------- file playback ----------
+  let audioBuffer=null, srcNode=null, playing=false, loopOn=false, startOffset=0, startTime=0, micStream=null, micOn=false;
+  const drop=$('drop'), fileInput=$('file');
+  drop.addEventListener('click',()=>fileInput.click());
+  ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+  drop.addEventListener('drop',e=>{ const f=e.dataTransfer.files[0]; if(f) loadFile(f); });
+  fileInput.addEventListener('change',()=>{ if(fileInput.files[0]) loadFile(fileInput.files[0]); });
+
+  async function loadFile(f){
+    $('fname').textContent='decoding… '+f.name;
+    try{
+      const buf=await f.arrayBuffer();
+      audioBuffer=await ctx.decodeAudioData(buf);
+      $('fname').textContent='◉ '+f.name+'  ('+fmtTime(audioBuffer.duration)+')';
+      $('play').disabled=false; $('seek').disabled=false;
+      startOffset=0; if(playing) stopSrc(); updatePlayBtn();
+      if(micOn) toggleMic();
+    }catch(e){ $('fname').textContent='⚠ could not decode that file'; }
+  }
+
+  function startSrc(offset){
+    srcNode=ctx.createBufferSource(); srcNode.buffer=audioBuffer; srcNode.loop=loopOn;
+    srcNode.connect(inputGain); srcNode.start(0,offset%audioBuffer.duration);
+    startTime=ctx.currentTime; playing=true;
+    srcNode.onended=()=>{ if(playing && !loopOn){ playing=false; startOffset=0; updatePlayBtn(); } };
+  }
+  function stopSrc(){ if(srcNode){ try{srcNode.onended=null; srcNode.stop();}catch(e){} srcNode.disconnect(); srcNode=null; } }
+
+  $('play').addEventListener('click',()=>{
+    if(!audioBuffer) return;
+    if(playing){ startOffset=curPos(); stopSrc(); playing=false; }
+    else { startSrc(startOffset); }
+    updatePlayBtn();
+  });
+  $('loop').addEventListener('click',()=>{ loopOn=!loopOn; $('loop').classList.toggle('on',loopOn); if(srcNode) srcNode.loop=loopOn; });
+
+  function curPos(){ if(!audioBuffer) return 0; let p=startOffset+(playing?(ctx.currentTime-startTime):0);
+    if(loopOn) p%=audioBuffer.duration; return clamp(p,0,audioBuffer.duration); }
+  const seek=$('seek');
+  seek.addEventListener('input',()=>{ if(!audioBuffer) return; const p=seek.value/1000*audioBuffer.duration;
+    startOffset=p; if(playing){ stopSrc(); startSrc(p); } });
+  function updatePlayBtn(){ $('play').textContent=playing?'❚❚ PAUSE':'▶ PLAY'; }
+  function updateTransportUI(){
+    if(audioBuffer){ const p=curPos();
+      if(document.activeElement!==seek) seek.value=(p/audioBuffer.duration*1000)||0;
+      $('time').textContent=fmtTime(p)+' / '+fmtTime(audioBuffer.duration);
+    }
+    if(recording){ $('recTime').textContent=fmtTime((ctx.currentTime-recStart)); }
+  }
+
+  // ---------- mic ----------
+  $('mic').addEventListener('click',toggleMic);
+  async function toggleMic(){
+    if(micOn){ if(micStream) micStream.getTracks().forEach(t=>t.stop()); if(micSrc) micSrc.disconnect();
+      micOn=false; $('mic').classList.remove('on'); return; }
+    try{
+      micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+      if(playing){ startOffset=curPos(); stopSrc(); playing=false; updatePlayBtn(); }
+      micSrc=ctx.createMediaStreamSource(micStream); micSrc.connect(inputGain);
+      micOn=true; $('mic').classList.add('on');
+    }catch(e){ alert('Mic access denied or unavailable.'); }
+  }
+  let micSrc=null;
+
+  // ---------- recording -> WAV ----------
+  let recording=false, recL=[], recR=[], recLen=0, recStart=0;
+  $('rec').addEventListener('click',()=>{
+    if(!recording){ recording=true; recL=[]; recR=[]; recLen=0; recStart=ctx.currentTime;
+      $('rec').classList.add('on'); $('rec').textContent='■ STOP'; $('dl').classList.add('hidden'); }
+    else { recording=false; $('rec').classList.remove('on'); $('rec').textContent='● RECORD'; finalizeWav(); }
+  });
+  function finalizeWav(){
+    if(recLen===0) return;
+    const L=merge(recL,recLen), R=merge(recR,recLen);
+    const blob=encodeWAV(L,R,ctx.sampleRate);
+    const url=URL.createObjectURL(blob);
+    const a=$('dl'); a.href=url; a.download='crushwave-'+Date.now()+'.wav'; a.classList.remove('hidden');
+  }
+  function merge(chunks,len){ const out=new Float32Array(len); let o=0; for(const c of chunks){ out.set(c,o); o+=c.length; } return out; }
+  function encodeWAV(l,r,sr){
+    const n=l.length, bytes=44+n*4, buf=new ArrayBuffer(bytes), v=new DataView(buf);
+    const ws=(off,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(off+i,s.charCodeAt(i)); };
+    ws(0,'RIFF'); v.setUint32(4,36+n*4,true); ws(8,'WAVE'); ws(12,'fmt '); v.setUint32(16,16,true);
+    v.setUint16(20,1,true); v.setUint16(22,2,true); v.setUint32(24,sr,true); v.setUint32(28,sr*4,true);
+    v.setUint16(32,4,true); v.setUint16(34,16,true); ws(36,'data'); v.setUint32(40,n*4,true);
+    let off=44; for(let i=0;i<n;i++){ let s=clamp(l[i],-1,1); v.setInt16(off,s<0?s*32768:s*32767,true); off+=2;
+      s=clamp(r[i],-1,1); v.setInt16(off,s<0?s*32768:s*32767,true); off+=2; }
+    return new Blob([buf],{type:'audio/wav'});
+  }
+
+  // ---------- power on ----------
+  power.addEventListener('click',async ()=>{
+    power.classList.add('hidden');
+    await initAudio();
+    if(ctx.state==='suspended') await ctx.resume();
+    resize(); wireControls(); applyAllControls();
+  });
+})();
+</script>
+</body>
+</html>
