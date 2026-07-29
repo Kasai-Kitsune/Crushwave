@@ -5,10 +5,7 @@ Mini studio bit crusher. Single HTML file, no dependencies, runs client-side in 
 ## What it does
 
 Web Audio bit crusher with a parametric EQ, drive, tone, dry/wet, and output stage, followed by a soft-clip limiter. Signal chain:
-
-```
-input → drive (soft saturation) → EQ → crusher (bit depth + sample rate reduction) → tone (low-pass) → dry/wet mix → output → limiter
-```
+## input → drive (soft saturation) → EQ → crusher (bit depth + sample rate reduction) → tone (low-pass) → dry/wet mix → output → limiter
 
 - **Spectral Node**: drag a point on screen to set EQ frequency and gain at once. Q/width is a separate control.
 - **Source**: drop or pick an audio file (wav/mp3/m4a/ogg), or route live mic input.
